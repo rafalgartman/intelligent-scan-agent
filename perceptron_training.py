@@ -156,7 +156,7 @@ def train_perceptron(epochs=3, random_masking=False, saving=True):
 def test_perceptron(model):
     # Define the test dataset
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-    test_dataset = datasets.MNIST(root='./data', train=False, transform=transform, download=False)
+    test_dataset = datasets.MNIST(root='', train=False, transform=transform, download=True)
     indices = torch.randperm(len(test_dataset))[:100]
     test_dataset = torch.utils.data.Subset(test_dataset, indices)
     test_loader = DataLoader(dataset=test_dataset, batch_size=64, shuffle=False)

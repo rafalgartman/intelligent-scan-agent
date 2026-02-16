@@ -368,6 +368,6 @@ class Env:
                     )
 
         # Per-step penalty encourages shorter trajectories regardless of outcome
-        rwd -= self.step_rwd
+        rwd += self.step_rwd
 
         return self.current_state.clone(), np.float32(rwd), bool(done0), info

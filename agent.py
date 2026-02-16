@@ -415,13 +415,13 @@ if __name__ == "__main__":
     env2 = Env(
         rng=3,
         nsteps=25,
-        explore_rwd=0,
+        explore_rwd=0.1,
         bounce_rwd=-1,
         return_rwd=-1,
-        hit_rwd=10,
+        hit_rwd=5,
         miss_rwd=0,
         rng_discover=1,
-        step_rwd=-0.5,
+        step_rwd=-0.2,
     )
 
     agent2 = Agent(
