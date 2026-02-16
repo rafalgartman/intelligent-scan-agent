@@ -122,7 +122,7 @@ class Env:
 
 
         # Load dataset
-        self.dataset = MNIST(root="./data", train=True, download=True, transform=ToTensor())
+        self.dataset = MNIST(root='', train=True, download=True, transform=ToTensor())
 
 
         # Load pretrained classifier used in observation

@@ -244,7 +244,7 @@ class Agent:
                 state = next_state
 
             # Logging
-            if episode % 100 == 0:
+            if episode % 100 == 0 and episode != 0:
                 last_n = self.rewards[-100:] if len(self.rewards) >= 100 else self.rewards
                 mean_last = float(np.mean(last_n)) if last_n else float("nan")
                 print(
@@ -274,7 +274,7 @@ class Agent:
         torch.save(self.policy_net.state_dict(), "pretrained_last.pth")
         torch.save(self.best_net.state_dict(), "pretrained_best.pth")
 
-    def test_walk(self, n_runs: int = 3):
+    def test_walk(self, n_runs: int = 1):
         """
         Visual debug: run the agent in the env and show:
           - true image
@@ -395,11 +395,11 @@ if __name__ == "__main__":
     agent = Agent(
         env,
         exploration_decay_fun=exploration_decay,
-        num_episodes=2000,
+        num_episodes=1000,
         batch_size=128,
         gamma=0.85,
         tau=0.003,
-        lr=5e-5,
+        lr=1e-4,
         memory_length=50000,
         guess_enabled=False,
     )
@@ -421,17 +421,17 @@ if __name__ == "__main__":
         hit_rwd=5,
         miss_rwd=0,
         rng_discover=1,
-        step_rwd=-0.2,
+        step_rwd=-0.1,
     )
 
     agent2 = Agent(
         env2,
         exploration_decay_fun=exploration_decay,
-        num_episodes=2000,
+        num_episodes=1000,
         batch_size=128,
         gamma=0.95,
         tau=0.003,
-        lr=2e-5,
+        lr=4e-5,
         memory_length=50000,
         guess_enabled=True,
     )
