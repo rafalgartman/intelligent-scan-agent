@@ -1,0 +1,20 @@
+# virtual env
+.venv/
+venv/
+FashionMNIST/
+MNIST/
+
+
+# python cache
+__pycache__/
+*.pyc
+
+# pycharm
+.idea/
+
+# results & models
+*.pth
+*.pt
+*.png
+runs/
+logs/
