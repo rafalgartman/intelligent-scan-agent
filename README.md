@@ -72,11 +72,12 @@ The environment state includes:
 pip install -r requirements.txt
 python agent.py
 
-Notes and improvement ideas
+## Notes and improvement ideas
 -Performance can be improved by training longer and tuning lr, tau, and gamma. It works better if trained for lowering lr + rewards changed to drive agent towards more greedy policies and induce faster guessing. 
 -In guessing mode, the random action is intentionally biased toward the guess action to encourage exploration of the additional decision action.
 -The perceptron can be retrained on partially observed images to better match the agent’s observation distribution.
 -The script periodically saves the best model (every 100 training episodes) based on evaluation success rate.
 -The code structure is intended to be adaptable to other scanning tasks beyond MNIST.
 -Optional: add CUDA support for faster training and a CLI interface for reproducible runs.
+
  
