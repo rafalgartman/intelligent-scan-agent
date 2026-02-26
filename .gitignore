@@ -3,6 +3,7 @@
 venv/
 FashionMNIST/
 MNIST/
+data/
 
 
 # python cache

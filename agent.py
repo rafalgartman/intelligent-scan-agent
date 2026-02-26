@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from environments import Env
-from utils import set_global_seed, to_state
+from utils import set_global_seed, to_state, load_or_keep
 
 
 # ----------------------------
@@ -38,6 +38,8 @@ class DQN(nn.Module):
 
 
 
+
+
 # ----------------------------
 # Agent
 # ----------------------------
@@ -54,7 +56,7 @@ class Agent:
         lr: float = 1e-5,
         memory_length: int = 10000,
         guess_enabled: bool = False,
-        fname_best: str = "pretrained_last.pth",
+        fname: str = "data/pretrained_best.pth",
     ):
         """
         DQN Agent with:
@@ -90,11 +92,13 @@ class Agent:
         self.target_net = DQN(n_observations, n_actions)
         self.best_net = DQN(n_observations, n_actions)
 
-        self.fname_best = fname_best
-        if os.path.exists(self.fname_best):
+        self.fname = fname
+        if os.path.exists(self.fname):
             # weights_only=True avoids loading arbitrary python objects (safer)
-            self.policy_net.load_state_dict(torch.load(self.fname_best, weights_only=True, map_location="cpu"))
-            print(f"Loaded {self.fname_best} as policy net")
+            loaded = load_or_keep(self.policy_net, self.fname)
+            self.policy_net.load_state_dict(loaded)
+            print(
+                f"Policy net weights applied from: {self.fname}" if loaded is not self.policy_net.state_dict() else "Policy net kept (no compatible checkpoint).")
         else:
             print("No pretrained policy net found. Initialized random parameters.")
 
@@ -102,7 +106,7 @@ class Agent:
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.best_net.load_state_dict(self.policy_net.state_dict())
 
-        self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.lr, amsgrad=True)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr, amsgrad=True)
 
         self.episode = 0
         self.rewards = []
@@ -111,7 +115,7 @@ class Agent:
         # store: (state_1d, action_int, reward_float, next_state_1d_or_None, done_bool)
         self.memory = deque([], maxlen=memory_length)
 
-    def select_action(self, state_1d: torch.Tensor) -> int:
+    def select_action(self, state_1d, net=None) -> int:
         """
         Epsilon-greedy action selection:
           - with probability eps: explore (random)
@@ -119,8 +123,9 @@ class Agent:
 
         Note: You explicitly restrict to actions [0..3] when guess_enabled=False.
         """
+        net = self.policy_net if net is None else net
         rnd = random.random()
-        training = self.policy_net.training
+        training = net.training
         eps = self.exploration_decay(self.episode, self.num_episodes) if training else 0.0
 
 
@@ -130,7 +135,7 @@ class Agent:
             # if counters are low and rnd > eps -> exploit; otherwise explore.
             if rnd > eps and self.env.counter[0] < 2 and self.env.counter[1] < 2:
                 with torch.no_grad():
-                    q = self.policy_net(state_1d.unsqueeze(0))[0]  # (n_actions,)
+                    q = net(state_1d.unsqueeze(0))[0]  # (n_actions,)
                     # Only consider the 4 movement actions in this phase.
                     return int(torch.argmax(q[0:4]).item())
 
@@ -144,11 +149,11 @@ class Agent:
         # NOTE: Here you currently explore by selecting action=4 (guess).
         # That is an unusual exploration strategy (normally random among all actions).
         # If it’s intentional (force agent to try guessing early), keep it.
-        if rnd < eps:
+        if rnd < eps and self.env.step_count > 10:  # I want to agent to exprience guessing after 10nth step
             return 4
 
         with torch.no_grad():
-            q = self.policy_net(state_1d.unsqueeze(0))[0]
+            q = net(state_1d.unsqueeze(0))[0]
             return int(torch.argmax(q).item())
 
     def optimize_step(self):
@@ -208,11 +213,10 @@ class Agent:
               select action -> env.step -> store transition -> optimize_step
             track episode reward and snapshot best_net
         """
-        highest_rwd = -np.inf
-        highest_episode = 0
-        self.policy_net.train()
+        highest_rate = -np.inf
 
         for episode in range(self.num_episodes):
+            self.policy_net.train()
             self.episode = episode
 
             state = to_state(self.env.reset())
@@ -233,46 +237,38 @@ class Agent:
 
                 if done:
                     self.rewards.append(reward_tot)
-
-                    # Keep best policy snapshot by total episode reward
-                    if reward_tot > highest_rwd:
-                        highest_rwd = reward_tot
-                        highest_episode = episode
-                        self.best_net.load_state_dict(self.policy_net.state_dict())
                     break
 
                 state = next_state
 
             # Logging
-            if episode % 100 == 0 and episode != 0:
-                last_n = self.rewards[-100:] if len(self.rewards) >= 100 else self.rewards
-                mean_last = float(np.mean(last_n)) if last_n else float("nan")
-                print(
-                    f"Episode: {episode}, Highest reward: {highest_rwd:.3f}, "
-                    f"last {len(last_n)} samples mean: {mean_last:.3f}"
-                )
+            if (episode + 1) % 100 == 0 and episode != 0:
+                print(f"Episode: {episode + 1} / {self.num_episodes}")
+                _, sr, _ = self.test_success_rate(500)
+
+                # Keep best policy snapshot by total episode reward
+                if sr > highest_rate:
+                    highest_rate = sr
+                    self.best_net.load_state_dict(self.policy_net.state_dict())
+                    torch.save(self.best_net.state_dict(), self.fname)
 
         # Plot training rewards + moving average + epsilon schedule
         episodes = np.arange(len(self.rewards))
         window = 100
         if len(self.rewards) > window:
             plt.figure()
-            plt.plot(highest_episode, highest_rwd, "or", label="max")
             plt.plot(episodes, self.rewards, label="rewards")
-
             moving_avg = np.convolve(np.array(self.rewards), np.ones(window) / window, mode="valid")
             plt.plot(episodes[window - 1 :], moving_avg, "r", label="moving average")
-
-            ax = plt.twinx()
-            ax.plot(episodes, self.exploration_decay(episodes, self.num_episodes), "k", label="epsilon")
-
+            plt.xlabel("episode")
+            plt.ylabel("rewards")
             plt.legend()
+            ax = plt.twinx()
+            ax.plot(episodes, self.exploration_decay(episodes, self.num_episodes), "k", label = "epsilon")
+            ax.set_ylabel("epsilon")
             plt.tight_layout()
             plt.show()
 
-        # Save end-of-training policy and best snapshot separately
-        torch.save(self.policy_net.state_dict(), "pretrained_last.pth")
-        torch.save(self.best_net.state_dict(), "pretrained_best.pth")
 
     def test_walk(self, n_runs: int = 1):
         """
@@ -292,7 +288,7 @@ class Agent:
             while True:
                 # Turn off exploration by forcing episode huge -> eps ~ 0
                 self.episode = int(1e18)
-                action = self.select_action(state)
+                action = self.select_action(state, net=self.best_net)
                 observation, reward, done, info = self.env.step(action)
                 total_reward += float(reward)
 
@@ -336,31 +332,31 @@ class Agent:
         success = 0.0
         success_full = 0.0
         steps_sum = 0.0
-
         for _ in range(n_trials):
             state = to_state(self.env.reset())
             done = False
 
             while not done:
                 self.episode = int(1e18)  # exploration off
-                action = self.select_action(state)
+                action = self.select_action(state, net=self.best_net)
                 observation, reward, done, info = self.env.step(action)
-
                 if done:
                     # info expected to contain [partial_success, full_image_success]
-                    success += float(info[0])
-                    success_full += float(info[1])
+                    success += float(info[0]) # 0/1 if correct/ incorrect answer for discovered picture
+                    success_full += float(info[1]) # 0/1 if correct/ incorrect answer for full picture
                     steps_sum += float(self.env.step_count)
                     break
 
                 state = to_state(observation)
 
-        sr = 100.0 * success / n_trials
-        sr_full = 100.0 * success_full / n_trials
+        success_rate = 100.0 * success / n_trials
+        success_rat_full = 100.0 * success_full / n_trials
         mean_steps = steps_sum / n_trials
 
-        print(f"SUCCESS RATE: {sr:.1f}% (full picture accuracy: {sr_full:.1f}%)")
+        print(f"SUCCESS RATE: {success_rate:.1f}% (full picture accuracy: {success_rat_full:.1f}%)")
         print(f"MEAN NUMBER OF STEPS: {mean_steps:.1f}")
+
+        return mean_steps, success_rate, success_rat_full
 
 
 # ----------------------------
@@ -371,22 +367,21 @@ if __name__ == "__main__":
 
     # STEP 1: train and save perceptron (used as part of the observation/state),
     # perceptron is loaded by environment to the evionment
-    from perceptron_training import train_perceptron, test_perceptron
-    mdl = train_perceptron(epochs=3, random_masking=False, saving=True)
-    test_perceptron(mdl)
+    from perceptron_training import train_perceptron
+    mdl = train_perceptron(epochs=1, random_masking=False, saving=True)
 
     # STEP 2: pretrain agent to search (no guessing action)
     # Epsilon decays from 1 -> 0 over training
     def exploration_decay(episode, num_episodes):
-        return np.exp(-episode / num_episodes * 10)
+        return np.exp(-episode / num_episodes * 3)
 
     env = Env(
-        rng=3,
-        nsteps=25,
-        explore_rwd=0.1,
+        rng=5,
+        nsteps=30,
+        explore_rwd=1,
         bounce_rwd=-1,
         return_rwd=-1,
-        hit_rwd=0.0,
+        hit_rwd=0.1,
         miss_rwd=-0.0,
         rng_discover=1,
         step_rwd=-0.0,
@@ -397,24 +392,40 @@ if __name__ == "__main__":
         exploration_decay_fun=exploration_decay,
         num_episodes=1000,
         batch_size=128,
-        gamma=0.85,
+        gamma=0.75,
         tau=0.003,
-        lr=1e-4,
+        lr=2e-4,
         memory_length=50000,
         guess_enabled=False,
     )
 
     agent.train()
     agent.test_walk()          # visualizes the scan process
-    agent.test_success_rate()  # prints success metrics
+
+    budgets = [5, 10, 15, 20, 25, 30]
+    srs, srfs = [], []
+
+    for b in budgets:
+        env.nsteps = b
+        agent.env = env
+        _, sr, srf = agent.test_success_rate()  # change function to return only these two
+        srs.append(sr)
+        srfs.append(srf)
+
+    plt.figure()
+    plt.plot(budgets, srs, marker="o", linestyle="--", label="partial observation")
+    plt.plot(budgets, srfs, marker="x", linestyle="--", label="full-image baseline")
+    plt.legend()
+    plt.xlabel("number of steps")
+    plt.ylabel("accuracy")
+    plt.show()
+
+
 
     # STEP 3: second training stage with guessing enabled
-    def exploration_decay(episode, num_episodes):
-        return 0.1 * np.exp(-episode / num_episodes * 5)
-
     env2 = Env(
-        rng=3,
-        nsteps=25,
+        rng=5,
+        nsteps=30,
         explore_rwd=0.1,
         bounce_rwd=-1,
         return_rwd=-1,
@@ -429,9 +440,9 @@ if __name__ == "__main__":
         exploration_decay_fun=exploration_decay,
         num_episodes=1000,
         batch_size=128,
-        gamma=0.95,
+        gamma=0.75,
         tau=0.003,
-        lr=4e-5,
+        lr=2e-4,
         memory_length=50000,
         guess_enabled=True,
     )

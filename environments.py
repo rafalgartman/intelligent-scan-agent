@@ -4,7 +4,6 @@ from typing import Tuple, Optional
 import numpy as np
 import torch
 from torchvision.datasets import MNIST
-from torchvision import datasets, transforms
 from torchvision.transforms import ToTensor
 
 from perceptron_training import Perceptron
@@ -45,11 +44,11 @@ def small_pic(
     )
 
 
-def load_nn() -> Perceptron:
+def load_perceptron(fname) -> Perceptron:
 
     model = Perceptron()
     # weights_only=True is safer (avoids unpickling arbitrary objects)
-    model.load_state_dict(torch.load("trained_LeNet.pth", weights_only=True, map_location="cpu"))
+    model.load_state_dict(torch.load(fname, weights_only=True, map_location="cpu"))
     model.eval()
     return model
 
@@ -91,10 +90,10 @@ class Env:
         return_rwd: float = -1.0,     # penalty for moving but revealing nothing new
         hit_rwd: float = 10.0,        # reward for correct guess
         miss_rwd: float = -10.0,      # penalty for incorrect guess
-        trigger_guess: bool = False,  # currently unused; kept for compatibility
         rng_discover: int = 0,        # discovery radius: 0=only current pixel; >0 reveals square around cursor
         step_rwd: float = 0.0,        # per-step penalty (encourages shorter scans)
         verbose: bool = False,
+        perceptron_fname: str = "data/trained_LeNet.pth"
     ):
         self.actions = {"up": 0, "down": 1, "left": 2, "right": 3, "guess": 4}
         self.verbose = verbose
@@ -109,7 +108,6 @@ class Env:
         self.nsteps = int(nsteps)
         self.rng = int(rng)
         self.rng_dis = int(rng_discover)
-        self.trigger = trigger_guess
 
         self.step_rwd = float(step_rwd)
 
@@ -119,14 +117,16 @@ class Env:
         self.rwd_return = float(return_rwd)
         self.rwd_hit = float(hit_rwd)
         self.rwd_miss = float(miss_rwd)
+        self.perceptron_fname = perceptron_fname
+
 
 
         # Load dataset
-        self.dataset = MNIST(root='', train=True, download=True, transform=ToTensor())
+        self.dataset = MNIST(root='data/', train=False, download=False, transform=ToTensor())
 
 
         # Load pretrained classifier used in observation
-        self.perceptron = load_nn()
+        self.perceptron = load_perceptron(self.perceptron_fname)
         self.perceptron.eval()
 
         # Image tensors (kept batched: (1,1,H,W) to match perceptron input)
@@ -262,8 +262,6 @@ class Env:
         x0, y0 = int(self.x), int(self.y)
         self.step_count += 1
 
-        info = "no info"
-
         # Snapshots are needed to detect "returned" and to compute "newly revealed info"
         img_before_step = self.masked_image.clone()
         mask_before_step = self.scan_mask.clone()
@@ -273,16 +271,17 @@ class Env:
         x1, y1 = x0, y0
 
         # Movement actions update x1,y1; action==4 ("guess") leaves position unchanged
-        if action == 0:  # up
-            x1 = max(0, x0 - jump)
-        elif action == 1:  # down
-            x1 = min(self.size_x - 1, x0 + jump * self.step_size)
-        elif action == 2:  # left
-            y1 = max(0, y0 - jump * self.step_size)
-        elif action == 3:  # right
-            y1 = min(self.size_y - 1, y0 + jump * self.step_size)
+        step = jump * self.step_size
+        if action == 0:
+            x1 = max(0, x0 - step)
+        elif action == 1:
+            x1 = min(self.size_x - 1, x0 + step)
+        elif action == 2:
+            y1 = max(0, y0 - step)
+        elif action == 3:
+            y1 = min(self.size_y - 1, y0 + step)
 
-        bounced = (x1 == x0 and y1 == y0)
+        bounced = (action in (0, 1, 2, 3)) and (x1 == x0 and y1 == y0)
 
         self.x = int(x1)
         self.y = int(y1)
@@ -322,7 +321,9 @@ class Env:
             rwd = self.rwd_return
         else:
             # Reward proportional to newly revealed info (delta in masked image)
-            rwd = (self.masked_image - img_before_step).sum().item() * self.rwd_explore
+            rwd = (self.masked_image - img_before_step).sum().item() * self.rwd_explore  # white pix detection
+            #rwd = (self.masked_image - img_before_step).std().item() * self.rwd_explore # or edge detection
+
 
         done0 = (self.step_count >= self.nsteps)
 
@@ -336,6 +337,7 @@ class Env:
         # --------------------------------------------------------
         # Terminal: compute final guess reward
         # --------------------------------------------------------
+        info = None
         if done0:
             with torch.no_grad():
                 # Baseline: perceptron performance with the full image
@@ -348,6 +350,7 @@ class Env:
 
             if choice == int(self.hidden_label):
                 # Reward can depend on remaining steps (earlier correct guess -> higher reward)
+                #rwd = (self.nsteps - self.step_count) + self.rwd_hit
                 rwd = min(10, self.nsteps - self.step_count) * self.rwd_hit
                 info = [1, guess_full]
                 if self.verbose:
@@ -358,6 +361,7 @@ class Env:
                     )
             else:
                 # Penalty scales with remaining steps (wrong guess earlier can be punished more)
+                #rwd = - (self.nsteps - self.step_count) + self.rwd_miss
                 rwd = (self.nsteps - self.step_count) * self.rwd_miss
                 info = [0, guess_full]
                 if self.verbose:
