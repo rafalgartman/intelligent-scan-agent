@@ -71,7 +71,7 @@ The environment state includes:
 ```bash
 pip install -r requirements.txt
 python agent.py
-
+```
 ## Notes and improvement ideas
 -Performance can be improved by training longer and tuning lr, tau, and gamma. It works better if trained for lowering lr + rewards changed to drive agent towards more greedy policies and induce faster guessing. 
 -In guessing mode, the random action is intentionally biased toward the guess action to encourage exploration of the additional decision action.
