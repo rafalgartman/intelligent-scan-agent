@@ -20,7 +20,7 @@ Example results (replace with your run output):
 
 ![Accuracy vs steps](assets/accuracy_vs_steps.png)
 
-Note: Trained agent net and perceptron are saved in data and will be reoaded in next run of the program. 
+Note: Trained agent net and perceptron are saved in data/ and will be reloaded in next run of the program. 
 
 ## What this demonstrates
 
